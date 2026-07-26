@@ -1,9 +1,0 @@
-{
-  "name":"My Weekly Budget",
-  "short_name":"Budget",
-  "start_url":"./",
-  "display":"standalone",
-  "background_color":"#eef3f8",
-  "theme_color":"#17365d",
-  "icons":[]
-}
