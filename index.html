@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#17365d" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+  <title>My Weekly Budget</title>
+</head>
+<body>
+  <header>
+    <h1>My Weekly Budget</h1>
+    <p>Track expenses and debt payments from your phone.</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Weekly settings</h2>
+      <div class="grid">
+        <label>Week start<input id="weekStart" type="date"></label>
+        <label>Groceries budget<input id="budgetGroceries" type="number" step="0.01" value="100"></label>
+        <label>Activity budget<input id="budgetActivity" type="number" step="0.01" value="60"></label>
+        <label>Gas budget<input id="budgetGas" type="number" step="0.01" value="70"></label>
+        <label>Other budget<input id="budgetOther" type="number" step="0.01" value="20"></label>
+      </div>
+      <button id="saveSettings">Save settings</button>
+    </section>
+
+    <section class="card">
+      <h2>Add expense</h2>
+      <form id="expenseForm" class="grid">
+        <label>Date<input id="expenseDate" type="date" required></label>
+        <label>Category
+          <select id="expenseCategory">
+            <option>Groceries</option><option>Activity</option><option>Gas</option><option>Other</option>
+          </select>
+        </label>
+        <label class="wide">Description<input id="expenseDescription" placeholder="Costco, movie, restaurant..." required></label>
+        <label>Amount<input id="expenseAmount" type="number" min="0" step="0.01" required></label>
+        <button type="submit">Add expense</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>This week</h2>
+      <div id="summary" class="summary"></div>
+    </section>
+
+    <section class="card">
+      <h2>Expense history</h2>
+      <div id="expenseList"></div>
+    </section>
+
+    <section class="card">
+      <h2>Add debt payment</h2>
+      <form id="debtForm" class="grid">
+        <label>Date<input id="debtDate" type="date" required></label>
+        <label>Account<select id="debtAccount"><option>Credit Card</option><option>Line of Credit</option></select></label>
+        <label class="wide">Description<input id="debtDescription" placeholder="Payday payment"></label>
+        <label>Amount<input id="debtAmount" type="number" min="0" step="0.01" required></label>
+        <button type="submit">Add payment</button>
+      </form>
+      <p class="total">Total contributed to debt: <strong id="debtTotal">$0.00</strong></p>
+      <div id="debtList"></div>
+    </section>
+
+    <section class="card actions">
+      <button id="exportCsv">Export data to CSV</button>
+      <button id="clearData" class="danger">Clear all data</button>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
