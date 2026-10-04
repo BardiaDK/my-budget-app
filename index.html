@@ -7,7 +7,7 @@
   <meta name="description" content="Private cloud-synced budget and debt tracker">
   <title>My Budget</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
   <div id="toast" class="toast"></div>
@@ -33,7 +33,7 @@
 
   <div id="appView" class="hidden">
     <header class="topbar">
-      <div><small>PERSONAL FINANCE</small><h1>My Budget</h1></div>
+      <div><small>PERSONAL FINANCE · V5</small><h1>My Budget</h1></div>
       <div class="header-actions"><span id="userEmail"></span><button id="signOutButton" class="secondary" type="button">Sign out</button></div>
     </header>
 
@@ -43,12 +43,53 @@
           <div><small>THIS WEEK</small><h2 id="weekLabel">Weekly overview</h2></div>
           <button id="refreshButton" class="secondary" type="button">Refresh</button>
         </div>
+
         <div class="kpis">
           <article><span>Weekly budget</span><strong id="weeklyBudgetKpi">$0.00</strong></article>
-          <article><span>Spent</span><strong id="weeklySpentKpi">$0.00</strong></article>
-          <article><span>Remaining</span><strong id="weeklyRemainingKpi">$0.00</strong></article>
-          <article><span>Debt paid this month</span><strong id="debtPaidKpi">$0.00</strong></article>
+          <article><span>Spent this week</span><strong id="weeklySpentKpi">$0.00</strong></article>
+          <article><span id="weeklySavedLabel">Saved / available</span><strong id="weeklyRemainingKpi">$0.00</strong></article>
+          <article><span>Spent this month</span><strong id="monthlySpentKpi">$0.00</strong></article>
         </div>
+
+        <section class="card savings-card">
+          <div class="row-between"><div><small>SPENDING SNAPSHOT</small><h3>Where you stand</h3></div><span id="monthNameLabel" class="muted"></span></div>
+          <div class="snapshot-grid">
+            <article class="snapshot-box">
+              <span>This week</span>
+              <strong id="weekSnapshotSaved">$0.00 saved</strong>
+              <p id="weekSnapshotDetail" class="muted">$0.00 spent of $0.00</p>
+            </article>
+            <article class="snapshot-box">
+              <span>This month</span>
+              <strong id="monthSnapshotSaved">$0.00 saved</strong>
+              <p id="monthSnapshotDetail" class="muted">$0.00 spent of $0.00 budget to date</p>
+            </article>
+          </div>
+          <p id="dashboardInsight" class="insight"></p>
+        </section>
+
+        <div class="dashboard-grid">
+          <section class="card chart-card">
+            <div class="row-between"><div><h3>Weekly spending & savings</h3><p class="muted chart-subtitle">Last 8 budget weeks</p></div><div class="chart-legend"><span><i class="spent-dot"></i>Spent</span><span><i class="saved-dot"></i>Saved</span></div></div>
+            <div id="weeklySpendingChart" class="trend-chart weekly-trend"></div>
+          </section>
+
+          <section class="card chart-card">
+            <div class="row-between"><div><h3>Monthly spending</h3><p class="muted chart-subtitle">Last 6 months</p></div><div class="chart-legend"><span><i class="spent-dot"></i>Spent</span><span><i class="budget-dot"></i>Budget</span></div></div>
+            <div id="monthlySpendingChart" class="trend-chart monthly-trend"></div>
+          </section>
+        </div>
+
+        <section class="card quick-add-card">
+          <div class="row-between"><div><small>QUICK ADD</small><h3>Log an expense</h3></div><button class="link jump" data-target="expenses" type="button">Full expense page</button></div>
+          <form id="quickExpenseForm" class="quick-form">
+            <label>Category<select id="quickExpenseCategory"><option>Groceries</option><option>Activity</option><option>Gas</option><option>Other</option></select></label>
+            <label>Amount<input id="quickExpenseAmount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required></label>
+            <label>Description<input id="quickExpenseDescription" maxlength="120" placeholder="Optional"></label>
+            <label>Date<input id="quickExpenseDate" type="date" required></label>
+            <button class="primary quick-submit" type="submit">Add</button>
+          </form>
+        </section>
 
         <section class="card debt-goal-card">
           <div class="row-between">
@@ -74,7 +115,7 @@
           <form id="expenseForm" class="grid-form">
             <label>Date<input id="expenseDate" type="date" required></label>
             <label>Category<select id="expenseCategory"><option>Groceries</option><option>Activity</option><option>Gas</option><option>Other</option></select></label>
-            <label class="wide">Description<input id="expenseDescription" maxlength="120" required></label>
+            <label class="wide">Description<input id="expenseDescription" maxlength="120" placeholder="Optional"></label>
             <label>Amount<input id="expenseAmount" type="number" min="0.01" step="0.01" required></label>
             <button class="primary end" type="submit">Add expense</button>
           </form>
@@ -136,7 +177,7 @@
         <div class="section-title"><div><small>PREFERENCES</small><h2>Budget settings</h2></div></div>
         <section class="card">
           <form id="settingsForm" class="grid-form">
-            <label>Week start<input id="weekStart" type="date" required></label>
+            <label>Week starts on<input id="weekStart" type="date" required><small class="field-help">Choose any date on your preferred start day. The app now advances the week automatically.</small></label>
             <label>Monthly debt goal<input id="monthlyDebtGoal" type="number" min="0" step="0.01"></label>
             <label>Groceries budget<input id="budgetGroceries" type="number" min="0" step="0.01" required></label>
             <label>Activity budget<input id="budgetActivity" type="number" min="0" step="0.01" required></label>
@@ -160,7 +201,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="config.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

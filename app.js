@@ -1,7 +1,7 @@
 (() => {
   const cfg = window.APP_CONFIG || {};
   if (!cfg.SUPABASE_URL || !cfg.SUPABASE_PUBLISHABLE_KEY || cfg.SUPABASE_PUBLISHABLE_KEY.includes("PASTE_")) {
-    alert("Open config.js and paste your Supabase publishable key first.");
+    alert("Your existing config.js is missing or does not contain the Supabase publishable key.");
     return;
   }
 
@@ -11,7 +11,6 @@
 
   const $ = id => document.getElementById(id);
   const money = value => new Intl.NumberFormat("en-US", {style:"currency", currency:"USD"}).format(Number(value || 0));
-  const isoToday = () => new Date().toISOString().slice(0, 10);
   const escapeHtml = str => String(str ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   let authMode = "signin";
@@ -20,27 +19,95 @@
   let expenses = [];
   let payments = [];
 
+  function toLocalIso(date) {
+    const d = new Date(date);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
+  const isoToday = () => toLocalIso(new Date());
+
+  function parseLocalDate(dateStr) {
+    const [y, m, d] = String(dateStr).split("-").map(Number);
+    return new Date(y, m - 1, d, 12, 0, 0, 0);
+  }
+
   function toast(text) {
     $("toast").textContent = text;
     $("toast").classList.add("show");
     setTimeout(() => $("toast").classList.remove("show"), 2600);
   }
 
-  function localDate(dateStr) {
-    return new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"});
+  function localDate(dateStr, options = {month:"short", day:"numeric", year:"numeric"}) {
+    return parseLocalDate(dateStr).toLocaleDateString("en-US", options);
   }
 
   function mondayOf(date = new Date()) {
     const d = new Date(date);
     const day = d.getDay();
     d.setDate(d.getDate() - day + (day === 0 ? -6 : 1));
-    return d.toISOString().slice(0, 10);
+    return toLocalIso(d);
   }
 
   function addDays(dateStr, days) {
-    const d = new Date(dateStr + "T00:00:00");
+    const d = parseLocalDate(dateStr);
     d.setDate(d.getDate() + days);
-    return d.toISOString().slice(0, 10);
+    return toLocalIso(d);
+  }
+
+  function addMonths(date, months) {
+    const d = new Date(date.getFullYear(), date.getMonth() + months, 1, 12);
+    return d;
+  }
+
+  function budgetCategories() {
+    return {
+      Groceries: Number(settings.groceries_budget || 0),
+      Activity: Number(settings.activity_budget || 0),
+      Gas: Number(settings.gas_budget || 0),
+      Other: Number(settings.other_budget || 0)
+    };
+  }
+
+  function weeklyBudgetTotal() {
+    return Object.values(budgetCategories()).reduce((a, b) => a + b, 0);
+  }
+
+  function preferredWeekday() {
+    return parseLocalDate(settings.week_start || mondayOf()).getDay();
+  }
+
+  function weekStartFor(date = new Date()) {
+    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+    const target = preferredWeekday();
+    const diff = (d.getDay() - target + 7) % 7;
+    d.setDate(d.getDate() - diff);
+    return toLocalIso(d);
+  }
+
+  function dateInRange(value, start, end) {
+    return value >= start && value <= end;
+  }
+
+  function sumExpenses(start, end, category = null) {
+    return expenses
+      .filter(x => dateInRange(x.expense_date, start, end) && (!category || x.category === category))
+      .reduce((a, x) => a + Number(x.amount), 0);
+  }
+
+  function currentMonthBounds(date = new Date()) {
+    const start = new Date(date.getFullYear(), date.getMonth(), 1, 12);
+    const end = new Date(date.getFullYear(), date.getMonth() + 1, 0, 12);
+    return { start: toLocalIso(start), end: toLocalIso(end) };
+  }
+
+  function monthlyBudgetForDate(date, toDate = false) {
+    const weekly = weeklyBudgetTotal();
+    const daily = weekly / 7;
+    const days = toDate ? date.getDate() : new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    return daily * days;
   }
 
   function showApp(user) {
@@ -71,9 +138,15 @@
     if (error) throw error;
     if (data) return data;
     const defaults = {
-      user_id: currentUser.id, week_start: mondayOf(), groceries_budget: 100, activity_budget: 60,
-      gas_budget: 70, other_budget: 20, starting_credit_card_balance: 0,
-      starting_loc_balance: 0, monthly_debt_goal: 0
+      user_id: currentUser.id,
+      week_start: mondayOf(),
+      groceries_budget: 100,
+      activity_budget: 60,
+      gas_budget: 70,
+      other_budget: 20,
+      starting_credit_card_balance: 0,
+      starting_loc_balance: 0,
+      monthly_debt_goal: 0
     };
     const { data: created, error: createError } = await db.from("budget_settings").insert(defaults).select().single();
     if (createError) throw createError;
@@ -132,16 +205,93 @@
     };
   }
 
+  function weeklyTrendData() {
+    const currentStart = weekStartFor(new Date());
+    const rows = [];
+    const budget = weeklyBudgetTotal();
+    for (let i = 7; i >= 0; i--) {
+      const start = addDays(currentStart, -7 * i);
+      const end = addDays(start, 6);
+      const spent = sumExpenses(start, end);
+      rows.push({
+        start,
+        end,
+        label: localDate(start, {month:"short", day:"numeric"}),
+        spent,
+        saved: Math.max(0, budget - spent),
+        over: Math.max(0, spent - budget),
+        budget
+      });
+    }
+    return rows;
+  }
+
+  function monthlyTrendData() {
+    const today = new Date();
+    const rows = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = addMonths(today, -i);
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      const start = toLocalIso(new Date(year, month, 1, 12));
+      const end = toLocalIso(new Date(year, month + 1, 0, 12));
+      const isCurrent = year === today.getFullYear() && month === today.getMonth();
+      const effectiveEnd = isCurrent ? isoToday() : end;
+      const spent = sumExpenses(start, effectiveEnd);
+      const budget = monthlyBudgetForDate(d, isCurrent);
+      rows.push({
+        label: d.toLocaleDateString("en-US", {month:"short"}),
+        spent,
+        budget,
+        saved: budget - spent,
+        isCurrent
+      });
+    }
+    return rows;
+  }
+
+  function renderWeeklyTrend() {
+    const rows = weeklyTrendData();
+    const maxValue = Math.max(weeklyBudgetTotal(), ...rows.flatMap(x => [x.spent, x.saved]), 1);
+    $("weeklySpendingChart").innerHTML = rows.map((x, index) => {
+      const spentHeight = Math.max(x.spent > 0 ? 5 : 0, (x.spent / maxValue) * 100);
+      const savedHeight = Math.max(x.saved > 0 ? 5 : 0, (x.saved / maxValue) * 100);
+      const current = index === rows.length - 1 ? " current-period" : "";
+      const savedText = x.over > 0 ? `${money(x.over)} over` : `${money(x.saved)} saved`;
+      return `<div class="trend-group${current}" title="${localDate(x.start)} – ${localDate(x.end)} · ${money(x.spent)} spent · ${savedText}">
+        <div class="trend-values"><span>${x.spent ? money(x.spent) : ""}</span><span>${x.saved ? money(x.saved) : ""}</span></div>
+        <div class="trend-bars"><div class="trend-bar spent" style="height:${spentHeight}%"></div><div class="trend-bar saved" style="height:${savedHeight}%"></div></div>
+        <span class="trend-label">${x.label}</span>
+      </div>`;
+    }).join("");
+  }
+
+  function renderMonthlyTrend() {
+    const rows = monthlyTrendData();
+    const maxValue = Math.max(...rows.flatMap(x => [x.spent, x.budget]), 1);
+    $("monthlySpendingChart").innerHTML = rows.map(x => {
+      const spentHeight = Math.max(x.spent > 0 ? 5 : 0, (x.spent / maxValue) * 100);
+      const budgetHeight = Math.max(x.budget > 0 ? 5 : 0, (x.budget / maxValue) * 100);
+      return `<div class="trend-group${x.isCurrent ? " current-period" : ""}" title="${x.label}: ${money(x.spent)} spent · ${money(x.budget)} budget${x.isCurrent ? " to date" : ""}">
+        <div class="trend-values"><span>${x.spent ? money(x.spent) : "$0"}</span><span>${money(x.budget)}</span></div>
+        <div class="trend-bars"><div class="trend-bar spent" style="height:${spentHeight}%"></div><div class="trend-bar budget" style="height:${budgetHeight}%"></div></div>
+        <span class="trend-label">${x.label}${x.isCurrent ? "*" : ""}</span>
+      </div>`;
+    }).join("");
+  }
+
   function renderDashboard() {
-    const start = settings.week_start;
+    const today = new Date();
+    const start = weekStartFor(today);
     const end = addDays(start, 6);
-    const weekly = expenses.filter(x => x.expense_date >= start && x.expense_date <= end);
-    const categories = {
-      Groceries: Number(settings.groceries_budget), Activity: Number(settings.activity_budget),
-      Gas: Number(settings.gas_budget), Other: Number(settings.other_budget)
-    };
-    const totalBudget = Object.values(categories).reduce((a, b) => a + b, 0);
-    const totalSpent = weekly.reduce((a, x) => a + Number(x.amount), 0);
+    const categories = budgetCategories();
+    const totalBudget = weeklyBudgetTotal();
+    const totalSpent = sumExpenses(start, end);
+    const weeklyBalance = totalBudget - totalSpent;
+    const monthBounds = currentMonthBounds(today);
+    const monthSpent = sumExpenses(monthBounds.start, isoToday());
+    const monthBudgetToDate = monthlyBudgetForDate(today, true);
+    const monthBalance = monthBudgetToDate - monthSpent;
     const debtThisMonth = currentMonthPaid();
     const debtGoal = Number(settings.monthly_debt_goal || 0);
     const goalPctRaw = debtGoal > 0 ? (debtThisMonth / debtGoal) * 100 : 0;
@@ -149,8 +299,32 @@
     $("weekLabel").textContent = `${localDate(start)} – ${localDate(end)}`;
     $("weeklyBudgetKpi").textContent = money(totalBudget);
     $("weeklySpentKpi").textContent = money(totalSpent);
-    $("weeklyRemainingKpi").textContent = money(totalBudget - totalSpent);
-    $("debtPaidKpi").textContent = money(debtThisMonth);
+    $("weeklyRemainingKpi").textContent = money(Math.abs(weeklyBalance));
+    $("weeklySavedLabel").textContent = weeklyBalance >= 0 ? "Saved / available" : "Over budget";
+    $("weeklyRemainingKpi").classList.toggle("negative-text", weeklyBalance < 0);
+    $("weeklyRemainingKpi").classList.toggle("positive-text", weeklyBalance >= 0);
+    $("monthlySpentKpi").textContent = money(monthSpent);
+
+    $("monthNameLabel").textContent = today.toLocaleDateString("en-US", {month:"long", year:"numeric"});
+    $("weekSnapshotSaved").textContent = weeklyBalance >= 0 ? `${money(weeklyBalance)} saved / available` : `${money(Math.abs(weeklyBalance))} over budget`;
+    $("weekSnapshotSaved").classList.toggle("negative-text", weeklyBalance < 0);
+    $("weekSnapshotDetail").textContent = `${money(totalSpent)} spent of ${money(totalBudget)}`;
+    $("monthSnapshotSaved").textContent = monthBalance >= 0 ? `${money(monthBalance)} saved / available` : `${money(Math.abs(monthBalance))} over budget`;
+    $("monthSnapshotSaved").classList.toggle("negative-text", monthBalance < 0);
+    $("monthSnapshotDetail").textContent = `${money(monthSpent)} spent of ${money(monthBudgetToDate)} budget to date`;
+
+    const categoryRows = Object.entries(categories).map(([name, budget]) => ({name, budget, spent: sumExpenses(start, end, name)}));
+    const untouched = categoryRows.filter(x => x.spent === 0 && x.budget > 0).map(x => x.name);
+    const largest = categoryRows.reduce((a, b) => b.spent > a.spent ? b : a, {name:"", spent:0});
+    let insight = weeklyBalance >= 0
+      ? `You are ${money(weeklyBalance)} under your weekly budget right now.`
+      : `You are ${money(Math.abs(weeklyBalance))} over your weekly budget right now.`;
+    if (untouched.length) insight += ` No spending yet in ${untouched.join(" and ")}.`;
+    else if (largest.spent > 0) insight += ` Your largest category this week is ${largest.name} at ${money(largest.spent)}.`;
+    if (monthBalance >= 0) insight += ` Month-to-date, ${money(monthBalance)} of your budget is still unspent.`;
+    else insight += ` Month-to-date, spending is ${money(Math.abs(monthBalance))} above your budget pace.`;
+    $("dashboardInsight").textContent = insight;
+
     $("dashboardDebtGoalAmount").textContent = `${money(debtThisMonth)} of ${money(debtGoal)}`;
     $("dashboardDebtGoalPercent").textContent = debtGoal > 0 ? `${Math.round(goalPctRaw)}%` : "0%";
     $("dashboardDebtGoalFill").style.width = `${Math.min(goalPctRaw, 100)}%`;
@@ -161,20 +335,26 @@
         ? `Goal reached — you are ${money(debtThisMonth - debtGoal)} ahead this month.`
         : `${money(debtGoal - debtThisMonth)} remaining to reach this month’s goal.`;
 
-    $("categoryProgress").innerHTML = Object.entries(categories).map(([name, budget]) => {
-      const spent = weekly.filter(x => x.category === name).reduce((a, x) => a + Number(x.amount), 0);
+    $("categoryProgress").innerHTML = categoryRows.map(({name, budget, spent}) => {
       const pct = budget > 0 ? Math.min((spent / budget) * 100, 100) : (spent > 0 ? 100 : 0);
-      return `<div class="progress"><div class="progress-meta"><strong>${name}</strong><span>${money(spent)} / ${money(budget)}</span></div><div class="track"><div class="fill ${spent > budget ? 'over' : ''}" style="width:${pct}%"></div></div></div>`;
+      const available = budget - spent;
+      const detail = available >= 0 ? `${money(available)} left` : `${money(Math.abs(available))} over`;
+      return `<div class="progress"><div class="progress-meta"><strong>${name}</strong><span>${money(spent)} / ${money(budget)} · ${detail}</span></div><div class="track"><div class="fill ${spent > budget ? 'over' : ''}" style="width:${pct}%"></div></div></div>`;
     }).join("");
+
     $("recentExpenses").innerHTML = expenseItems(expenses.slice(0, 5), false);
+    renderWeeklyTrend();
+    renderMonthlyTrend();
   }
 
   function expenseItems(rows, showDelete = true) {
     if (!rows.length) return `<div class="empty">No expenses yet.</div>`;
-    return rows.map(x => `<div class="item"><div><div class="item-title">${escapeHtml(x.description)}</div><div class="item-sub">${escapeHtml(x.category)} · ${localDate(x.expense_date)}</div></div><div class="amount">${money(x.amount)}</div>${showDelete ? `<button class="delete" data-delete-expense="${x.id}" type="button">Delete</button>` : `<span></span>`}</div>`).join("");
+    return rows.map(x => `<div class="item"><div><div class="item-title">${escapeHtml(x.description || x.category)}</div><div class="item-sub">${escapeHtml(x.category)} · ${localDate(x.expense_date)}</div></div><div class="amount">${money(x.amount)}</div>${showDelete ? `<button class="delete" data-delete-expense="${x.id}" type="button">Delete</button>` : `<span></span>`}</div>`).join("");
   }
 
-  function renderExpenses() { $("expenseList").innerHTML = expenseItems(expenses, true); }
+  function renderExpenses() {
+    $("expenseList").innerHTML = expenseItems(expenses, true);
+  }
 
   function renderDebt() {
     const remain = remainingDebt();
@@ -244,8 +424,21 @@
     window.scrollTo({top:0, behavior:"smooth"});
   }
 
+  async function addExpenseFromForm({date, category, description, amount}) {
+    const row = {
+      user_id: currentUser.id,
+      expense_date: date,
+      category,
+      description: description.trim() || category,
+      amount: Number(amount)
+    };
+    const { error } = await db.from("expenses").insert(row);
+    if (error) throw error;
+  }
+
   $("signInTab").onclick = () => setAuthMode("signin");
   $("signUpTab").onclick = () => setAuthMode("signup");
+
   $("authForm").addEventListener("submit", async e => {
     e.preventDefault();
     const email = $("authEmail").value.trim();
@@ -260,8 +453,11 @@
         const { error } = await db.auth.signInWithPassword({email, password});
         if (error) throw error;
       }
-    } catch (err) { $("authMessage").textContent = err.message || "Authentication failed."; }
-    finally { $("authSubmit").disabled = false; }
+    } catch (err) {
+      $("authMessage").textContent = err.message || "Authentication failed.";
+    } finally {
+      $("authSubmit").disabled = false;
+    }
   });
 
   $("forgotPassword").onclick = async () => {
@@ -270,18 +466,48 @@
     const { error } = await db.auth.resetPasswordForEmail(email, {redirectTo:window.location.origin + window.location.pathname});
     toast(error ? error.message : "Password reset email sent.");
   };
+
   $("signOutButton").onclick = async () => { await db.auth.signOut(); showAuth(); };
   $("refreshButton").onclick = loadAll;
   $("contributionYear").onchange = renderContributions;
   document.querySelectorAll(".nav").forEach(btn => btn.onclick = () => switchView(btn.dataset.view));
   document.querySelectorAll(".jump").forEach(btn => btn.onclick = () => switchView(btn.dataset.target));
 
+  $("quickExpenseForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    try {
+      await addExpenseFromForm({
+        date: $("quickExpenseDate").value,
+        category: $("quickExpenseCategory").value,
+        description: $("quickExpenseDescription").value,
+        amount: $("quickExpenseAmount").value
+      });
+      $("quickExpenseAmount").value = "";
+      $("quickExpenseDescription").value = "";
+      $("quickExpenseDate").value = isoToday();
+      toast("Expense added.");
+      await loadAll();
+    } catch (err) {
+      toast(err.message || "Unable to add expense.");
+    }
+  });
+
   $("expenseForm").addEventListener("submit", async e => {
     e.preventDefault();
-    const row = {user_id:currentUser.id, expense_date:$("expenseDate").value, category:$("expenseCategory").value, description:$("expenseDescription").value.trim(), amount:Number($("expenseAmount").value)};
-    const { error } = await db.from("expenses").insert(row);
-    if (error) return toast(error.message);
-    e.target.reset(); $("expenseDate").value = isoToday(); toast("Expense added."); await loadAll();
+    try {
+      await addExpenseFromForm({
+        date: $("expenseDate").value,
+        category: $("expenseCategory").value,
+        description: $("expenseDescription").value,
+        amount: $("expenseAmount").value
+      });
+      e.target.reset();
+      $("expenseDate").value = isoToday();
+      toast("Expense added.");
+      await loadAll();
+    } catch (err) {
+      toast(err.message || "Unable to add expense.");
+    }
   });
 
   $("debtForm").addEventListener("submit", async e => {
@@ -289,15 +515,30 @@
     const row = {user_id:currentUser.id, payment_date:$("debtDate").value, account:$("debtAccount").value, description:$("debtDescription").value.trim(), amount:Number($("debtAmount").value)};
     const { error } = await db.from("debt_payments").insert(row);
     if (error) return toast(error.message);
-    e.target.reset(); $("debtDate").value = isoToday(); toast("Debt payment added."); await loadAll();
+    e.target.reset();
+    $("debtDate").value = isoToday();
+    toast("Debt payment added.");
+    await loadAll();
   });
 
   $("settingsForm").addEventListener("submit", async e => {
     e.preventDefault();
-    const row = {user_id:currentUser.id, week_start:$("weekStart").value, monthly_debt_goal:Number($("monthlyDebtGoal").value || 0), groceries_budget:Number($("budgetGroceries").value), activity_budget:Number($("budgetActivity").value), gas_budget:Number($("budgetGas").value), other_budget:Number($("budgetOther").value), starting_credit_card_balance:Number($("startingCreditCard").value), starting_loc_balance:Number($("startingLoc").value), updated_at:new Date().toISOString()};
+    const row = {
+      user_id: currentUser.id,
+      week_start: $("weekStart").value,
+      monthly_debt_goal: Number($("monthlyDebtGoal").value || 0),
+      groceries_budget: Number($("budgetGroceries").value),
+      activity_budget: Number($("budgetActivity").value),
+      gas_budget: Number($("budgetGas").value),
+      other_budget: Number($("budgetOther").value),
+      starting_credit_card_balance: Number($("startingCreditCard").value),
+      starting_loc_balance: Number($("startingLoc").value),
+      updated_at: new Date().toISOString()
+    };
     const { error } = await db.from("budget_settings").upsert(row, {onConflict:"user_id"});
     if (error) return toast(error.message);
-    toast("Settings saved."); await loadAll();
+    toast("Settings saved.");
+    await loadAll();
   });
 
   document.addEventListener("click", async e => {
@@ -305,11 +546,15 @@
     const debtId = e.target.dataset.deleteDebt;
     if (expenseId && confirm("Delete this expense?")) {
       const { error } = await db.from("expenses").delete().eq("id", expenseId);
-      if (error) return toast(error.message); toast("Expense deleted."); await loadAll();
+      if (error) return toast(error.message);
+      toast("Expense deleted.");
+      await loadAll();
     }
     if (debtId && confirm("Delete this debt payment?")) {
       const { error } = await db.from("debt_payments").delete().eq("id", debtId);
-      if (error) return toast(error.message); toast("Payment deleted."); await loadAll();
+      if (error) return toast(error.message);
+      toast("Payment deleted.");
+      await loadAll();
     }
   });
 
@@ -317,13 +562,22 @@
     const rows = [["Date","Category","Description","Amount"], ...expenses.map(x => [x.expense_date, x.category, x.description, Number(x.amount).toFixed(2)])];
     const csv = rows.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
-    const url = URL.createObjectURL(blob); const a = document.createElement("a");
-    a.href = url; a.download = `expenses-${isoToday()}.csv`; a.click(); URL.revokeObjectURL(url);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `expenses-${isoToday()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   $("expenseDate").value = isoToday();
   $("debtDate").value = isoToday();
+  $("quickExpenseDate").value = isoToday();
+
   db.auth.onAuthStateChange((_event, session) => session?.user ? showApp(session.user) : showAuth());
   db.auth.getSession().then(({data}) => data.session?.user ? showApp(data.session.user) : showAuth());
-  if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(console.error));
+
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=5").catch(console.error));
+  }
 })();
