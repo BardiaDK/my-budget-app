@@ -7,7 +7,7 @@
   <meta name="description" content="Private cloud-synced budget and debt tracker">
   <title>My Budget</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
   <div id="toast" class="toast"></div>
@@ -33,7 +33,7 @@
 
   <div id="appView" class="hidden">
     <header class="topbar">
-      <div><small>PERSONAL FINANCE · V6</small><h1>My Budget</h1></div>
+      <div><small>PERSONAL FINANCE · V8</small><h1>My Budget</h1></div>
       <div class="header-actions"><span id="userEmail"></span><button id="signOutButton" class="secondary" type="button">Sign out</button></div>
     </header>
 
@@ -83,6 +83,67 @@
             </article>
           </div>
           <p id="dashboardInsight" class="insight"></p>
+        </section>
+
+
+        <section class="card closeout-card" id="weeklyCloseoutCard">
+          <div class="row-between closeout-heading">
+            <div><small>WEEKLY CLOSEOUT</small><h3>Decide what happens to unused budget</h3></div>
+            <span id="closeoutBadge" class="closeout-badge">Week in progress</span>
+          </div>
+
+          <div class="closeout-stats">
+            <article><span>Allocated to savings</span><strong id="closeoutSavingsTotal">$0.00</strong></article>
+            <article><span>Sent to debt</span><strong id="closeoutDebtTotal">$0.00</strong></article>
+            <article><span>Carry-in this week</span><strong id="closeoutCarryIn">$0.00</strong></article>
+          </div>
+
+          <div id="closeoutStatus" class="closeout-status"></div>
+
+          <form id="closeoutForm" class="closeout-form hidden">
+            <div class="closeout-summary">
+              <div><span>Budget</span><strong id="closeoutBudget">$0.00</strong></div>
+              <div><span>Spent</span><strong id="closeoutSpent">$0.00</strong></div>
+              <div><span>Unused</span><strong id="closeoutUnused">$0.00</strong></div>
+              <div><span>Already carried in</span><strong id="closeoutCarryUsed">$0.00</strong></div>
+            </div>
+
+            <div class="closeout-fields">
+              <label>Allocate to
+                <select id="closeoutAllocation">
+                  <option value="Savings">Savings</option>
+                  <option value="Debt">Debt</option>
+                  <option value="Carry Forward">Carry forward to next week</option>
+                  <option value="Unallocated">Leave unallocated</option>
+                </select>
+              </label>
+              <label>Amount
+                <input id="closeoutAmount" type="number" min="0" step="0.01" inputmode="decimal" required>
+                <small id="closeoutAmountHelp" class="field-help"></small>
+              </label>
+              <div id="closeoutDebtFields" class="closeout-debt-fields hidden">
+                <label>Debt account
+                  <select id="closeoutDebtAccount"><option>Credit Card</option><option>Line of Credit</option></select>
+                </label>
+                <label>Payment date
+                  <input id="closeoutDebtDate" type="date">
+                </label>
+              </div>
+              <label class="closeout-note">Note
+                <input id="closeoutNote" maxlength="160" placeholder="Optional">
+              </label>
+            </div>
+            <p class="muted closeout-help">Savings and carry-forward are tracking decisions only. Choose Debt only after you actually make the payment; it will also be added to your debt tracker.</p>
+            <div class="closeout-actions">
+              <button id="saveCloseoutButton" class="primary" type="submit">Save closeout</button>
+              <button id="deleteCloseoutButton" class="secondary danger-outline hidden" type="button">Delete closeout</button>
+            </div>
+          </form>
+
+          <div class="closeout-history-wrap">
+            <div class="row-between"><h4>Recent closeouts</h4><span class="muted">Cloud synced</span></div>
+            <div id="closeoutHistory" class="closeout-history"></div>
+          </div>
         </section>
 
         <div class="dashboard-grid">
@@ -222,7 +283,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=6"></script>
-  <script src="app.js?v=6"></script>
+  <script src="config.js?v=8"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

@@ -18,6 +18,8 @@
   let settings = null;
   let expenses = [];
   let payments = [];
+  let closeouts = [];
+  let closeoutsAvailable = true;
   let selectedWeekStart = null;
   let selectedMonthDate = null;
 
@@ -83,8 +85,26 @@
     const bounds = currentMonthBounds(monthDate);
     const effectiveEnd = isCurrent ? isoToday() : bounds.end;
     const spent = sumExpenses(bounds.start, effectiveEnd);
-    const budget = monthlyBudgetForDate(isCurrent ? today : monthDate, isCurrent);
-    return { monthDate, isCurrent, start: bounds.start, end: bounds.end, effectiveEnd, spent, budget, balance: budget - spent };
+
+    // Monthly reporting uses the FULL calendar-month budget so an early
+    // purchase (for example a tank of gas on the 3rd) is not labelled
+    // "over budget" just because only a few days of the month have passed.
+    const fullBudget = monthlyBudgetForDate(monthDate, false);
+    const paceBudget = isCurrent ? monthlyBudgetForDate(today, true) : fullBudget;
+
+    return {
+      monthDate,
+      isCurrent,
+      start: bounds.start,
+      end: bounds.end,
+      effectiveEnd,
+      spent,
+      budget: fullBudget,
+      fullBudget,
+      paceBudget,
+      balance: fullBudget - spent,
+      paceDifference: paceBudget - spent
+    };
   }
 
   function budgetCategories() {
@@ -98,6 +118,28 @@
 
   function weeklyBudgetTotal() {
     return Object.values(budgetCategories()).reduce((a, b) => a + b, 0);
+  }
+
+  function closeoutForWeek(weekStart) {
+    return closeouts.find(x => x.week_start === weekStart) || null;
+  }
+
+  function carryInForWeek(weekStart) {
+    const previous = closeoutForWeek(addDays(weekStart, -7));
+    return previous && previous.allocation_type === "Carry Forward" ? Number(previous.allocation_amount || 0) : 0;
+  }
+
+  function weeklyBudgetForStart(weekStart) {
+    return weeklyBudgetTotal() + carryInForWeek(weekStart);
+  }
+
+  function closeoutTotals() {
+    return closeouts.reduce((acc, x) => {
+      const amount = Number(x.allocation_amount || 0);
+      if (x.allocation_type === "Savings") acc.savings += amount;
+      if (x.allocation_type === "Debt") acc.debt += amount;
+      return acc;
+    }, {savings:0, debt:0});
   }
 
   function preferredWeekday() {
@@ -183,14 +225,27 @@
       settings = await ensureSettings();
       if (!selectedWeekStart) selectedWeekStart = weekStartFor(new Date());
       if (!selectedMonthDate) selectedMonthDate = firstOfMonth(new Date());
-      const [expenseResult, debtResult] = await Promise.all([
+      const [expenseResult, debtResult, closeoutResult] = await Promise.all([
         db.from("expenses").select("*").order("expense_date", {ascending:false}).order("created_at", {ascending:false}),
-        db.from("debt_payments").select("*").order("payment_date", {ascending:false}).order("created_at", {ascending:false})
+        db.from("debt_payments").select("*").order("payment_date", {ascending:false}).order("created_at", {ascending:false}),
+        db.from("weekly_closeouts").select("*").order("week_start", {ascending:false})
       ]);
       if (expenseResult.error) throw expenseResult.error;
       if (debtResult.error) throw debtResult.error;
       expenses = expenseResult.data || [];
       payments = debtResult.data || [];
+      if (closeoutResult.error) {
+        const msg = `${closeoutResult.error.code || ""} ${closeoutResult.error.message || ""}`.toLowerCase();
+        if (msg.includes("weekly_closeouts") || msg.includes("pgrst205") || msg.includes("42p01")) {
+          closeoutsAvailable = false;
+          closeouts = [];
+        } else {
+          throw closeoutResult.error;
+        }
+      } else {
+        closeoutsAvailable = true;
+        closeouts = closeoutResult.data || [];
+      }
       render();
     } catch (err) {
       console.error(err);
@@ -236,10 +291,10 @@
     const anchor = selectedWeekStart || weekStartFor(new Date());
     const currentStart = weekStartFor(new Date());
     const rows = [];
-    const budget = weeklyBudgetTotal();
     for (let i = 7; i >= 0; i--) {
       const start = addDays(anchor, -7 * i);
       const end = addDays(start, 6);
+      const budget = weeklyBudgetForStart(start);
       const spent = sumExpenses(start, end);
       rows.push({
         start,
@@ -278,7 +333,7 @@
 
   function renderWeeklyTrend() {
     const rows = weeklyTrendData();
-    const maxValue = Math.max(weeklyBudgetTotal(), ...rows.flatMap(x => [x.spent, x.saved, x.over]), 1);
+    const maxValue = Math.max(...rows.flatMap(x => [x.spent, x.saved, x.over, x.budget]), 1);
     $("weeklySpendingChart").innerHTML = rows.map(x => {
       const spentHeight = Math.max(x.spent > 0 ? 5 : 0, (x.spent / maxValue) * 100);
       const savedHeight = Math.max(x.saved > 0 ? 5 : 0, (x.saved / maxValue) * 100);
@@ -302,7 +357,7 @@
       const spentHeight = Math.max(x.spent > 0 ? 5 : 0, (x.spent / maxValue) * 100);
       const budgetHeight = Math.max(x.budget > 0 ? 5 : 0, (x.budget / maxValue) * 100);
       const classes = ["trend-group", x.isCurrent ? "current-period" : "", x.isSelected ? "selected-period" : ""].filter(Boolean).join(" ");
-      return `<button class="${classes}" data-month-start="${x.monthStart}" type="button" title="${x.longLabel}: ${money(x.spent)} spent · ${money(x.budget)} budget${x.isCurrent ? " to date" : ""}" aria-label="Select ${x.longLabel}">
+      return `<button class="${classes}" data-month-start="${x.monthStart}" type="button" title="${x.longLabel}: ${money(x.spent)} ${x.isCurrent ? "spent so far" : "spent"} · ${money(x.budget)} full-month budget" aria-label="Select ${x.longLabel}">
         <div class="trend-values"><span>${x.spent ? money(x.spent) : "$0"}</span><span>${money(x.budget)}</span></div>
         <div class="trend-bars"><div class="trend-bar spent" style="height:${spentHeight}%"></div><div class="trend-bar budget" style="height:${budgetHeight}%"></div></div>
         <span class="trend-label">${x.label}${x.isCurrent ? "*" : ""}</span>
@@ -325,12 +380,16 @@
     const monthInfo = monthSummary(selectedMonthDate);
     const isCurrentMonth = monthInfo.isCurrent;
     const categories = budgetCategories();
-    const totalBudget = weeklyBudgetTotal();
+    const baseBudget = weeklyBudgetTotal();
+    const carryIn = carryInForWeek(start);
+    const totalBudget = weeklyBudgetForStart(start);
     const totalSpent = sumExpenses(start, end);
     const weeklyBalance = totalBudget - totalSpent;
     const monthSpent = monthInfo.spent;
-    const monthBudget = monthInfo.budget;
+    const monthBudget = monthInfo.fullBudget;
+    const monthPaceBudget = monthInfo.paceBudget;
     const monthBalance = monthInfo.balance;
+    const monthPaceDifference = monthInfo.paceDifference;
 
     const debtThisMonth = currentMonthPaid();
     const debtGoal = Number(settings.monthly_debt_goal || 0);
@@ -338,6 +397,7 @@
 
     $("weekLabel").textContent = `${localDate(start)} – ${localDate(end)}`;
     $("weeklyBudgetKpi").textContent = money(totalBudget);
+    $("weeklyBudgetKpi").title = carryIn > 0 ? `${money(baseBudget)} base + ${money(carryIn)} carried in` : `${money(baseBudget)} base budget`;
     $("weeklySpentLabel").textContent = isCurrentWeek ? "Spent this week" : "Spent selected week";
     $("weeklySpentKpi").textContent = money(totalSpent);
     $("weeklyRemainingKpi").textContent = money(Math.abs(weeklyBalance));
@@ -362,10 +422,21 @@
     $("weekSnapshotDetail").textContent = `${money(totalSpent)} spent of ${money(totalBudget)}`;
 
     $("monthSnapshotTitle").textContent = isCurrentMonth ? "This month" : "Selected month";
-    $("monthSnapshotSaved").textContent = monthBalance >= 0 ? `${money(monthBalance)} saved / available` : `${money(Math.abs(monthBalance))} over budget`;
+    if (isCurrentMonth) {
+      $("monthSnapshotSaved").textContent = monthBalance >= 0
+        ? `${money(monthBalance)} remaining in full-month budget`
+        : `${money(Math.abs(monthBalance))} over full-month budget`;
+    } else {
+      $("monthSnapshotSaved").textContent = monthBalance >= 0
+        ? `${money(monthBalance)} saved / unused`
+        : `${money(Math.abs(monthBalance))} over budget`;
+    }
     $("monthSnapshotSaved").classList.toggle("negative-text", monthBalance < 0);
     $("monthSnapshotSaved").classList.toggle("positive-text", monthBalance >= 0);
-    $("monthSnapshotDetail").textContent = `${money(monthSpent)} spent of ${money(monthBudget)} ${isCurrentMonth ? "budget to date" : "monthly budget"}`;
+    const paceText = isCurrentMonth
+      ? ` · ${money(monthPaceBudget)} budget pace through today`
+      : "";
+    $("monthSnapshotDetail").textContent = `${money(monthSpent)} spent of ${money(monthBudget)} full-month budget${paceText}`;
 
     const categoryRows = Object.entries(categories).map(([name, budget]) => ({name, budget, spent: sumExpenses(start, end, name)}));
     const untouched = categoryRows.filter(x => x.spent === 0 && x.budget > 0).map(x => x.name);
@@ -375,8 +446,19 @@
       : `${isCurrentWeek ? "You are" : "You were"} ${money(Math.abs(weeklyBalance))} over budget ${isCurrentWeek ? "this week" : "for the selected week"}.`;
     if (untouched.length) insight += ` No spending ${isCurrentWeek ? "yet" : "was recorded"} in ${untouched.join(" and ")}.`;
     else if (largest.spent > 0) insight += ` The largest category ${isCurrentWeek ? "is" : "was"} ${largest.name} at ${money(largest.spent)}.`;
-    if (monthBalance >= 0) insight += ` ${isCurrentMonth ? "Month-to-date" : selectedMonthDate.toLocaleDateString("en-US", {month:"long"})}, ${money(monthBalance)} of the budget ${isCurrentMonth ? "is still unspent" : "was unspent"}.`;
-    else insight += ` ${isCurrentMonth ? "Month-to-date" : selectedMonthDate.toLocaleDateString("en-US", {month:"long"})}, spending ${isCurrentMonth ? "is" : "was"} ${money(Math.abs(monthBalance))} above budget.`;
+    if (isCurrentMonth) {
+      if (monthBalance >= 0) insight += ` ${money(monthBalance)} remains in the full ${selectedMonthDate.toLocaleDateString("en-US", {month:"long"})} budget.`;
+      else insight += ` ${selectedMonthDate.toLocaleDateString("en-US", {month:"long"})} spending is ${money(Math.abs(monthBalance))} above the full-month budget.`;
+
+      if (monthPaceDifference >= 0) {
+        insight += ` Spending is ${money(monthPaceDifference)} below today's budget pace.`;
+      } else {
+        insight += ` Spending is ${money(Math.abs(monthPaceDifference))} above today's pace, but that is not counted as over budget unless the full-month limit is exceeded.`;
+      }
+    } else {
+      if (monthBalance >= 0) insight += ` ${selectedMonthDate.toLocaleDateString("en-US", {month:"long"})} finished with ${money(monthBalance)} unused.`;
+      else insight += ` ${selectedMonthDate.toLocaleDateString("en-US", {month:"long"})} finished ${money(Math.abs(monthBalance))} over budget.`;
+    }
     $("dashboardInsight").textContent = insight;
 
     $("dashboardDebtGoalAmount").textContent = `${money(debtThisMonth)} of ${money(debtGoal)}`;
@@ -397,28 +479,151 @@
       return `<div class="progress"><div class="progress-meta"><strong>${name}</strong><span>${money(spent)} / ${money(budget)} · ${detail}</span></div><div class="track"><div class="fill ${spent > budget ? "over" : ""}" style="width:${pct}%"></div></div></div>`;
     }).join("");
 
-    const monthDaysBudgeted = isCurrentMonth ? today.getDate() : new Date(selectedMonthDate.getFullYear(), selectedMonthDate.getMonth() + 1, 0).getDate();
+    const daysInSelectedMonth = new Date(selectedMonthDate.getFullYear(), selectedMonthDate.getMonth() + 1, 0).getDate();
+    const daysElapsedInSelectedMonth = isCurrentMonth ? today.getDate() : daysInSelectedMonth;
     const monthlyCategoryRows = Object.entries(categories).map(([name, weeklyBudget]) => {
-      const budget = (weeklyBudget / 7) * monthDaysBudgeted;
+      const dailyBudget = weeklyBudget / 7;
+      const budget = dailyBudget * daysInSelectedMonth;
+      const paceBudget = dailyBudget * daysElapsedInSelectedMonth;
       const spent = sumExpenses(monthInfo.start, monthInfo.effectiveEnd, name);
-      return {name, budget, spent};
+      return {name, budget, paceBudget, spent};
     });
     $("monthlyBreakdownTitle").textContent = `${selectedMonthDate.toLocaleDateString("en-US", {month:"long", year:"numeric"})} category breakdown`;
-    $("monthlyBreakdownStatus").textContent = monthBalance >= 0 ? `${money(monthBalance)} unspent` : `${money(Math.abs(monthBalance))} over`;
+    $("monthlyBreakdownStatus").textContent = monthBalance >= 0
+      ? (isCurrentMonth ? `${money(monthBalance)} remaining` : `${money(monthBalance)} unused`)
+      : `${money(Math.abs(monthBalance))} over`;
     $("monthlyBreakdownStatus").classList.toggle("negative-text", monthBalance < 0);
     $("monthlyBreakdownStatus").classList.toggle("positive-text", monthBalance >= 0);
-    $("monthlyCategoryProgress").innerHTML = monthlyCategoryRows.map(({name, budget, spent}) => {
+    $("monthlyCategoryProgress").innerHTML = monthlyCategoryRows.map(({name, budget, paceBudget, spent}) => {
       const pct = budget > 0 ? Math.min((spent / budget) * 100, 100) : (spent > 0 ? 100 : 0);
       const available = budget - spent;
-      const detail = available >= 0 ? `${money(available)} left` : `${money(Math.abs(available))} over`;
-      return `<div class="progress"><div class="progress-meta"><strong>${name}</strong><span>${money(spent)} / ${money(budget)} · ${detail}</span></div><div class="track"><div class="fill ${spent > budget ? "over" : ""}" style="width:${pct}%"></div></div></div>`;
+      const detail = available >= 0 ? `${money(available)} remaining` : `${money(Math.abs(available))} over`;
+      let paceDetail = "";
+      if (isCurrentMonth) {
+        const paceDiff = paceBudget - spent;
+        paceDetail = paceDiff >= 0
+          ? ` · ${money(paceDiff)} below today's pace`
+          : ` · ${money(Math.abs(paceDiff))} above today's pace`;
+      }
+      return `<div class="progress"><div class="progress-meta"><strong>${name}</strong><span>${money(spent)} / ${money(budget)} full month · ${detail}${paceDetail}</span></div><div class="track"><div class="fill ${spent > budget ? "over" : ""}" style="width:${pct}%"></div></div></div>`;
     }).join("");
 
     const selectedWeekExpenses = expenses.filter(x => dateInRange(x.expense_date, start, end));
     $("selectedWeekExpensesTitle").textContent = `${isCurrentWeek ? "Expenses this week" : "Expenses in selected week"} · ${selectedWeekExpenses.length}`;
     $("recentExpenses").innerHTML = expenseItems(selectedWeekExpenses.slice(0, 10), false);
+    renderWeeklyCloseout({start, end, totalBudget, baseBudget, carryIn, totalSpent, weeklyBalance, isCurrentWeek});
     renderWeeklyTrend();
     renderMonthlyTrend();
+  }
+
+  function closeoutAllocationDescription(row) {
+    const amount = Number(row.allocation_amount || 0);
+    if (row.allocation_type === "Savings") return `${money(amount)} to savings`;
+    if (row.allocation_type === "Debt") return `${money(amount)} to ${row.debt_account || "debt"}`;
+    if (row.allocation_type === "Carry Forward") return `${money(amount)} carried forward`;
+    return `${money(amount)} left unallocated`;
+  }
+
+  function renderCloseoutHistory() {
+    if (!closeoutsAvailable) {
+      $("closeoutHistory").innerHTML = `<div class="empty">Run the weekly closeout Supabase setup SQL to enable closeouts.</div>`;
+      return;
+    }
+    const rows = [...closeouts].sort((a,b) => b.week_start.localeCompare(a.week_start)).slice(0, 6);
+    $("closeoutHistory").innerHTML = rows.length ? rows.map(x => {
+      const end = x.week_end || addDays(x.week_start, 6);
+      const remainder = Math.max(0, Number(x.unused_amount || 0) - Number(x.allocation_amount || 0));
+      return `<div class="closeout-history-item"><div><strong>${localDate(x.week_start,{month:"short",day:"numeric"})} – ${localDate(end,{month:"short",day:"numeric"})}</strong><small>${escapeHtml(closeoutAllocationDescription(x))}${remainder > 0 ? ` · ${money(remainder)} remained unallocated` : ""}</small></div><span class="closeout-tag">${escapeHtml(x.allocation_type)}</span></div>`;
+    }).join("") : `<div class="empty">No weeks closed out yet.</div>`;
+  }
+
+  function renderCloseoutAmountHint() {
+    if ($("closeoutForm").classList.contains("hidden")) return;
+    const max = Number($("closeoutAmount").max || 0);
+    const amount = Math.max(0, Number($("closeoutAmount").value || 0));
+    const remaining = Math.max(0, max - amount);
+    $("closeoutAmountHelp").textContent = remaining > 0 ? `${money(remaining)} will remain unallocated.` : `All ${money(max)} is accounted for.`;
+  }
+
+  function toggleCloseoutDebtFields() {
+    const isDebt = $("closeoutAllocation").value === "Debt";
+    $("closeoutDebtFields").classList.toggle("hidden", !isDebt);
+    $("closeoutDebtDate").required = isDebt;
+    renderCloseoutAmountHint();
+  }
+
+  function renderWeeklyCloseout({start, end, totalBudget, baseBudget, carryIn, totalSpent, weeklyBalance, isCurrentWeek}) {
+    const totals = closeoutTotals();
+    $("closeoutSavingsTotal").textContent = money(totals.savings);
+    $("closeoutDebtTotal").textContent = money(totals.debt);
+    $("closeoutCarryIn").textContent = money(carryInForWeek(weekStartFor(new Date())));
+    renderCloseoutHistory();
+
+    const form = $("closeoutForm");
+    const existing = closeoutForWeek(start);
+    $("deleteCloseoutButton").classList.toggle("hidden", !existing);
+    $("closeoutBadge").classList.remove("done", "warning");
+
+    if (!closeoutsAvailable) {
+      form.classList.add("hidden");
+      $("closeoutBadge").textContent = "Setup needed";
+      $("closeoutBadge").classList.add("warning");
+      $("closeoutStatus").className = "closeout-status warning";
+      $("closeoutStatus").textContent = "Weekly Closeout needs one Supabase table. Run supabase_weekly_closeouts.sql once, then refresh the app. Everything else will keep working until you do.";
+      return;
+    }
+
+    const currentStart = weekStartFor(new Date());
+    const completed = start < currentStart;
+    if (!completed) {
+      form.classList.add("hidden");
+      $("closeoutBadge").textContent = "Week in progress";
+      $("closeoutStatus").className = "closeout-status";
+      $("closeoutStatus").textContent = `Closeout becomes available after ${localDate(end, {month:"short",day:"numeric"})}. Right now you have ${weeklyBalance >= 0 ? money(weeklyBalance) + " available" : money(Math.abs(weeklyBalance)) + " over budget"}.`;
+      return;
+    }
+
+    if (weeklyBalance <= 0 && !existing) {
+      form.classList.add("hidden");
+      $("closeoutBadge").textContent = weeklyBalance < 0 ? "Over budget" : "No unused budget";
+      $("closeoutBadge").classList.add("warning");
+      $("closeoutStatus").className = "closeout-status warning";
+      $("closeoutStatus").textContent = weeklyBalance < 0 ? `This week finished ${money(Math.abs(weeklyBalance))} over budget, so there is no unused amount to allocate.` : "This week used the full budget, so there is nothing to allocate.";
+      return;
+    }
+
+    const available = Math.max(0, weeklyBalance);
+    form.classList.remove("hidden");
+    $("closeoutBudget").textContent = money(totalBudget);
+    $("closeoutSpent").textContent = money(totalSpent);
+    $("closeoutUnused").textContent = money(available);
+    $("closeoutCarryUsed").textContent = carryIn > 0 ? money(carryIn) : "$0.00";
+    $("closeoutAmount").max = String(available.toFixed(2));
+
+    if (existing) {
+      $("closeoutBadge").textContent = "Closed";
+      $("closeoutBadge").classList.add("done");
+      $("closeoutStatus").className = "closeout-status success";
+      const remainder = Math.max(0, available - Number(existing.allocation_amount || 0));
+      $("closeoutStatus").textContent = `${closeoutAllocationDescription(existing)}${remainder > 0 ? `, with ${money(remainder)} left unallocated.` : "."} You can update the decision below.`;
+      $("closeoutAllocation").value = existing.allocation_type || "Savings";
+      $("closeoutAmount").value = Math.min(available, Number(existing.allocation_amount || 0)).toFixed(2);
+      $("closeoutDebtAccount").value = existing.debt_account || "Credit Card";
+      $("closeoutDebtDate").value = existing.debt_payment_date || isoToday();
+      $("closeoutNote").value = existing.note || "";
+      $("saveCloseoutButton").textContent = "Update closeout";
+    } else {
+      $("closeoutBadge").textContent = "Ready to close";
+      $("closeoutStatus").className = "closeout-status";
+      $("closeoutStatus").textContent = `You finished this week with ${money(available)} unused. Choose what you actually did with that money.`;
+      $("closeoutAllocation").value = "Savings";
+      $("closeoutAmount").value = available.toFixed(2);
+      $("closeoutDebtAccount").value = "Credit Card";
+      $("closeoutDebtDate").value = isoToday();
+      $("closeoutNote").value = "";
+      $("saveCloseoutButton").textContent = "Save closeout";
+    }
+    toggleCloseoutDebtFields();
   }
 
   function expenseItems(rows, showDelete = true) {
@@ -535,6 +740,98 @@
     if (error) throw error;
   }
 
+  async function saveWeeklyCloseout() {
+    if (!closeoutsAvailable) return toast("Run the weekly closeout Supabase setup SQL first.");
+    const start = selectedWeekStart || weekStartFor(new Date());
+    const currentStart = weekStartFor(new Date());
+    if (start >= currentStart) return toast("You can close a week after it ends.");
+    const end = addDays(start, 6);
+    const budget = weeklyBudgetForStart(start);
+    const spent = sumExpenses(start, end);
+    const unused = Math.max(0, budget - spent);
+    if (unused <= 0) return toast("There is no unused budget to allocate.");
+
+    const allocationType = $("closeoutAllocation").value;
+    const allocationAmount = Number($("closeoutAmount").value || 0);
+    if (!Number.isFinite(allocationAmount) || allocationAmount < 0 || allocationAmount > unused + 0.001) {
+      return toast(`Enter an amount between $0 and ${money(unused)}.`);
+    }
+    const existing = closeoutForWeek(start);
+    let debtPaymentId = existing?.debt_payment_id || null;
+    let debtAccount = null;
+    let debtPaymentDate = null;
+
+    try {
+      if (allocationType === "Debt" && allocationAmount > 0) {
+        debtAccount = $("closeoutDebtAccount").value;
+        debtPaymentDate = $("closeoutDebtDate").value || isoToday();
+        const paymentRow = {
+          user_id: currentUser.id,
+          payment_date: debtPaymentDate,
+          account: debtAccount,
+          description: `Weekly closeout · ${localDate(start,{month:"short",day:"numeric"})}–${localDate(end,{month:"short",day:"numeric"})}`,
+          amount: allocationAmount
+        };
+        if (debtPaymentId) {
+          const { data: updated, error: updateError } = await db.from("debt_payments").update(paymentRow).eq("id", debtPaymentId).select("id").maybeSingle();
+          if (updateError) throw updateError;
+          if (!updated) debtPaymentId = null;
+        }
+        if (!debtPaymentId) {
+          const { data: inserted, error: insertError } = await db.from("debt_payments").insert(paymentRow).select("id").single();
+          if (insertError) throw insertError;
+          debtPaymentId = String(inserted.id);
+        }
+      } else if (debtPaymentId) {
+        const { error: deleteDebtError } = await db.from("debt_payments").delete().eq("id", debtPaymentId);
+        if (deleteDebtError) throw deleteDebtError;
+        debtPaymentId = null;
+      }
+
+      const row = {
+        user_id: currentUser.id,
+        week_start: start,
+        week_end: end,
+        budget_amount: budget,
+        spent_amount: spent,
+        unused_amount: unused,
+        allocation_type: allocationType,
+        allocation_amount: allocationAmount,
+        debt_account: debtAccount,
+        debt_payment_id: debtPaymentId,
+        debt_payment_date: debtPaymentDate,
+        note: $("closeoutNote").value.trim() || null,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await db.from("weekly_closeouts").upsert(row, {onConflict:"user_id,week_start"});
+      if (error) throw error;
+      toast(existing ? "Weekly closeout updated." : "Week closed out.");
+      await loadAll();
+    } catch (err) {
+      console.error(err);
+      toast(err.message || "Unable to save closeout.");
+    }
+  }
+
+  async function deleteWeeklyCloseout() {
+    const start = selectedWeekStart || weekStartFor(new Date());
+    const existing = closeoutForWeek(start);
+    if (!existing) return;
+    if (!confirm("Delete this weekly closeout? Any linked debt payment created by the closeout will also be removed.")) return;
+    try {
+      if (existing.debt_payment_id) {
+        const { error: debtError } = await db.from("debt_payments").delete().eq("id", existing.debt_payment_id);
+        if (debtError) throw debtError;
+      }
+      const { error } = await db.from("weekly_closeouts").delete().eq("id", existing.id);
+      if (error) throw error;
+      toast("Closeout deleted.");
+      await loadAll();
+    } catch (err) {
+      toast(err.message || "Unable to delete closeout.");
+    }
+  }
+
   $("signInTab").onclick = () => setAuthMode("signin");
   $("signUpTab").onclick = () => setAuthMode("signup");
 
@@ -575,6 +872,10 @@
   $("nextMonthButton").onclick = () => goToMonth(1);
   $("thisMonthButton").onclick = jumpToCurrentMonth;
   $("contributionYear").onchange = renderContributions;
+  $("closeoutAllocation").onchange = toggleCloseoutDebtFields;
+  $("closeoutAmount").oninput = renderCloseoutAmountHint;
+  $("closeoutForm").addEventListener("submit", async e => { e.preventDefault(); await saveWeeklyCloseout(); });
+  $("deleteCloseoutButton").onclick = deleteWeeklyCloseout;
   document.querySelectorAll(".nav").forEach(btn => btn.onclick = () => switchView(btn.dataset.view));
   document.querySelectorAll(".jump").forEach(btn => btn.onclick = () => switchView(btn.dataset.target));
 
@@ -671,6 +972,9 @@
     if (debtId && confirm("Delete this debt payment?")) {
       const { error } = await db.from("debt_payments").delete().eq("id", debtId);
       if (error) return toast(error.message);
+      if (closeoutsAvailable) {
+        await db.from("weekly_closeouts").update({debt_payment_id:null, updated_at:new Date().toISOString()}).eq("debt_payment_id", String(debtId));
+      }
       toast("Payment deleted.");
       await loadAll();
     }
@@ -696,6 +1000,6 @@
   db.auth.getSession().then(({data}) => data.session?.user ? showApp(data.session.user) : showAuth());
 
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=6").catch(console.error));
+    window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=8").catch(console.error));
   }
 })();
