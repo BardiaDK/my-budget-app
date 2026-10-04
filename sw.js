@@ -1,5 +1,5 @@
-const CACHE = "budget-v5-1";
-const CORE = ["./", "./index.html", "./style.css?v=5", "./app.js?v=5", "./manifest.json"];
+const CACHE = "budget-v6-1";
+const CORE = ["./", "./index.html", "./style.css?v=6", "./app.js?v=6", "./manifest.json"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(CORE)).then(() => self.skipWaiting()));

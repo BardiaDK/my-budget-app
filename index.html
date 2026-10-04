@@ -7,7 +7,7 @@
   <meta name="description" content="Private cloud-synced budget and debt tracker">
   <title>My Budget</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <div id="toast" class="toast"></div>
@@ -33,34 +33,51 @@
 
   <div id="appView" class="hidden">
     <header class="topbar">
-      <div><small>PERSONAL FINANCE · V5</small><h1>My Budget</h1></div>
+      <div><small>PERSONAL FINANCE · V6</small><h1>My Budget</h1></div>
       <div class="header-actions"><span id="userEmail"></span><button id="signOutButton" class="secondary" type="button">Sign out</button></div>
     </header>
 
     <main class="container">
       <section id="dashboardView" class="panel">
-        <div class="section-title">
-          <div><small>THIS WEEK</small><h2 id="weekLabel">Weekly overview</h2></div>
-          <button id="refreshButton" class="secondary" type="button">Refresh</button>
+        <div class="section-title dashboard-title">
+          <div><small>WEEKLY VIEW</small><h2 id="weekLabel">Weekly overview</h2></div>
+          <div class="period-nav-wrap">
+            <div class="period-nav" aria-label="Week navigation">
+              <button id="prevWeekButton" class="period-arrow" type="button" aria-label="Previous week">‹</button>
+              <button id="thisWeekButton" class="period-today" type="button">This week</button>
+              <button id="nextWeekButton" class="period-arrow" type="button" aria-label="Next week">›</button>
+            </div>
+            <button id="refreshButton" class="secondary" type="button">Refresh</button>
+          </div>
         </div>
 
         <div class="kpis">
           <article><span>Weekly budget</span><strong id="weeklyBudgetKpi">$0.00</strong></article>
-          <article><span>Spent this week</span><strong id="weeklySpentKpi">$0.00</strong></article>
+          <article><span id="weeklySpentLabel">Spent this week</span><strong id="weeklySpentKpi">$0.00</strong></article>
           <article><span id="weeklySavedLabel">Saved / available</span><strong id="weeklyRemainingKpi">$0.00</strong></article>
-          <article><span>Spent this month</span><strong id="monthlySpentKpi">$0.00</strong></article>
+          <article><span id="monthlySpentLabel">Spent this month</span><strong id="monthlySpentKpi">$0.00</strong></article>
         </div>
 
         <section class="card savings-card">
-          <div class="row-between"><div><small>SPENDING SNAPSHOT</small><h3>Where you stand</h3></div><span id="monthNameLabel" class="muted"></span></div>
+          <div class="row-between snapshot-heading">
+            <div><small>SPENDING SNAPSHOT</small><h3>Where you stand</h3></div>
+            <div class="month-nav-area">
+              <span id="monthNameLabel" class="muted period-name"></span>
+              <div class="period-nav compact" aria-label="Month navigation">
+                <button id="prevMonthButton" class="period-arrow" type="button" aria-label="Previous month">‹</button>
+                <button id="thisMonthButton" class="period-today" type="button">This month</button>
+                <button id="nextMonthButton" class="period-arrow" type="button" aria-label="Next month">›</button>
+              </div>
+            </div>
+          </div>
           <div class="snapshot-grid">
             <article class="snapshot-box">
-              <span>This week</span>
+              <span id="weekSnapshotTitle">This week</span>
               <strong id="weekSnapshotSaved">$0.00 saved</strong>
               <p id="weekSnapshotDetail" class="muted">$0.00 spent of $0.00</p>
             </article>
             <article class="snapshot-box">
-              <span>This month</span>
+              <span id="monthSnapshotTitle">This month</span>
               <strong id="monthSnapshotSaved">$0.00 saved</strong>
               <p id="monthSnapshotDetail" class="muted">$0.00 spent of $0.00 budget to date</p>
             </article>
@@ -70,12 +87,12 @@
 
         <div class="dashboard-grid">
           <section class="card chart-card">
-            <div class="row-between"><div><h3>Weekly spending & savings</h3><p class="muted chart-subtitle">Last 8 budget weeks</p></div><div class="chart-legend"><span><i class="spent-dot"></i>Spent</span><span><i class="saved-dot"></i>Saved</span></div></div>
+            <div class="row-between"><div><h3>Weekly spending & savings</h3><p id="weeklyChartSubtitle" class="muted chart-subtitle">Last 8 budget weeks</p></div><div class="chart-legend"><span><i class="spent-dot"></i>Spent</span><span><i class="saved-dot"></i>Saved</span></div></div>
             <div id="weeklySpendingChart" class="trend-chart weekly-trend"></div>
           </section>
 
           <section class="card chart-card">
-            <div class="row-between"><div><h3>Monthly spending</h3><p class="muted chart-subtitle">Last 6 months</p></div><div class="chart-legend"><span><i class="spent-dot"></i>Spent</span><span><i class="budget-dot"></i>Budget</span></div></div>
+            <div class="row-between"><div><h3>Monthly spending</h3><p id="monthlyChartSubtitle" class="muted chart-subtitle">Last 6 months</p></div><div class="chart-legend"><span><i class="spent-dot"></i>Spent</span><span><i class="budget-dot"></i>Budget</span></div></div>
             <div id="monthlySpendingChart" class="trend-chart monthly-trend"></div>
           </section>
         </div>
@@ -101,9 +118,13 @@
           <p id="dashboardDebtGoalMessage" class="muted goal-message">Set a monthly debt goal in Settings.</p>
         </section>
 
-        <section class="card"><h3>Category progress</h3><div id="categoryProgress"></div></section>
+        <section class="card"><h3 id="weeklyCategoryTitle">Weekly category progress</h3><div id="categoryProgress"></div></section>
         <section class="card">
-          <div class="row-between"><h3>Recent expenses</h3><button class="link jump" data-target="expenses" type="button">View all</button></div>
+          <div class="row-between"><h3 id="monthlyBreakdownTitle">Monthly category breakdown</h3><span id="monthlyBreakdownStatus" class="muted"></span></div>
+          <div id="monthlyCategoryProgress"></div>
+        </section>
+        <section class="card">
+          <div class="row-between"><h3 id="selectedWeekExpensesTitle">Expenses in this week</h3><button class="link jump" data-target="expenses" type="button">View all</button></div>
           <div id="recentExpenses" class="list"></div>
         </section>
       </section>
@@ -201,7 +222,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=5"></script>
-  <script src="app.js?v=5"></script>
+  <script src="config.js?v=6"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

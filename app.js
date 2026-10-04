@@ -18,6 +18,8 @@
   let settings = null;
   let expenses = [];
   let payments = [];
+  let selectedWeekStart = null;
+  let selectedMonthDate = null;
 
   function toLocalIso(date) {
     const d = new Date(date);
@@ -60,6 +62,29 @@
   function addMonths(date, months) {
     const d = new Date(date.getFullYear(), date.getMonth() + months, 1, 12);
     return d;
+  }
+
+  function firstOfMonth(date = new Date()) {
+    return new Date(date.getFullYear(), date.getMonth(), 1, 12);
+  }
+
+  function monthKey(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  function sameMonth(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+  }
+
+  function monthSummary(date) {
+    const monthDate = firstOfMonth(date);
+    const today = new Date();
+    const isCurrent = sameMonth(monthDate, today);
+    const bounds = currentMonthBounds(monthDate);
+    const effectiveEnd = isCurrent ? isoToday() : bounds.end;
+    const spent = sumExpenses(bounds.start, effectiveEnd);
+    const budget = monthlyBudgetForDate(isCurrent ? today : monthDate, isCurrent);
+    return { monthDate, isCurrent, start: bounds.start, end: bounds.end, effectiveEnd, spent, budget, balance: budget - spent };
   }
 
   function budgetCategories() {
@@ -156,6 +181,8 @@
   async function loadAll() {
     try {
       settings = await ensureSettings();
+      if (!selectedWeekStart) selectedWeekStart = weekStartFor(new Date());
+      if (!selectedMonthDate) selectedMonthDate = firstOfMonth(new Date());
       const [expenseResult, debtResult] = await Promise.all([
         db.from("expenses").select("*").order("expense_date", {ascending:false}).order("created_at", {ascending:false}),
         db.from("debt_payments").select("*").order("payment_date", {ascending:false}).order("created_at", {ascending:false})
@@ -206,11 +233,12 @@
   }
 
   function weeklyTrendData() {
+    const anchor = selectedWeekStart || weekStartFor(new Date());
     const currentStart = weekStartFor(new Date());
     const rows = [];
     const budget = weeklyBudgetTotal();
     for (let i = 7; i >= 0; i--) {
-      const start = addDays(currentStart, -7 * i);
+      const start = addDays(anchor, -7 * i);
       const end = addDays(start, 6);
       const spent = sumExpenses(start, end);
       rows.push({
@@ -220,31 +248,29 @@
         spent,
         saved: Math.max(0, budget - spent),
         over: Math.max(0, spent - budget),
-        budget
+        budget,
+        isCurrent: start === currentStart,
+        isSelected: start === anchor
       });
     }
     return rows;
   }
 
   function monthlyTrendData() {
-    const today = new Date();
+    const anchor = selectedMonthDate || firstOfMonth(new Date());
     const rows = [];
     for (let i = 5; i >= 0; i--) {
-      const d = addMonths(today, -i);
-      const year = d.getFullYear();
-      const month = d.getMonth();
-      const start = toLocalIso(new Date(year, month, 1, 12));
-      const end = toLocalIso(new Date(year, month + 1, 0, 12));
-      const isCurrent = year === today.getFullYear() && month === today.getMonth();
-      const effectiveEnd = isCurrent ? isoToday() : end;
-      const spent = sumExpenses(start, effectiveEnd);
-      const budget = monthlyBudgetForDate(d, isCurrent);
+      const d = addMonths(anchor, -i);
+      const summary = monthSummary(d);
       rows.push({
+        monthStart: toLocalIso(firstOfMonth(d)),
         label: d.toLocaleDateString("en-US", {month:"short"}),
-        spent,
-        budget,
-        saved: budget - spent,
-        isCurrent
+        longLabel: d.toLocaleDateString("en-US", {month:"long", year:"numeric"}),
+        spent: summary.spent,
+        budget: summary.budget,
+        saved: summary.balance,
+        isCurrent: summary.isCurrent,
+        isSelected: sameMonth(d, anchor)
       });
     }
     return rows;
@@ -252,18 +278,21 @@
 
   function renderWeeklyTrend() {
     const rows = weeklyTrendData();
-    const maxValue = Math.max(weeklyBudgetTotal(), ...rows.flatMap(x => [x.spent, x.saved]), 1);
-    $("weeklySpendingChart").innerHTML = rows.map((x, index) => {
+    const maxValue = Math.max(weeklyBudgetTotal(), ...rows.flatMap(x => [x.spent, x.saved, x.over]), 1);
+    $("weeklySpendingChart").innerHTML = rows.map(x => {
       const spentHeight = Math.max(x.spent > 0 ? 5 : 0, (x.spent / maxValue) * 100);
       const savedHeight = Math.max(x.saved > 0 ? 5 : 0, (x.saved / maxValue) * 100);
-      const current = index === rows.length - 1 ? " current-period" : "";
       const savedText = x.over > 0 ? `${money(x.over)} over` : `${money(x.saved)} saved`;
-      return `<div class="trend-group${current}" title="${localDate(x.start)} – ${localDate(x.end)} · ${money(x.spent)} spent · ${savedText}">
+      const classes = ["trend-group", x.isCurrent ? "current-period" : "", x.isSelected ? "selected-period" : ""].filter(Boolean).join(" ");
+      return `<button class="${classes}" data-week-start="${x.start}" type="button" title="${localDate(x.start)} – ${localDate(x.end)} · ${money(x.spent)} spent · ${savedText}" aria-label="Select week ${localDate(x.start)} to ${localDate(x.end)}">
         <div class="trend-values"><span>${x.spent ? money(x.spent) : ""}</span><span>${x.saved ? money(x.saved) : ""}</span></div>
         <div class="trend-bars"><div class="trend-bar spent" style="height:${spentHeight}%"></div><div class="trend-bar saved" style="height:${savedHeight}%"></div></div>
         <span class="trend-label">${x.label}</span>
-      </div>`;
+      </button>`;
     }).join("");
+    if (rows.length) {
+      $("weeklyChartSubtitle").textContent = `${localDate(rows[0].start, {month:"short", day:"numeric", year:"numeric"})} – ${localDate(rows[rows.length - 1].end, {month:"short", day:"numeric", year:"numeric"})} · tap a week`;
+    }
   }
 
   function renderMonthlyTrend() {
@@ -272,57 +301,82 @@
     $("monthlySpendingChart").innerHTML = rows.map(x => {
       const spentHeight = Math.max(x.spent > 0 ? 5 : 0, (x.spent / maxValue) * 100);
       const budgetHeight = Math.max(x.budget > 0 ? 5 : 0, (x.budget / maxValue) * 100);
-      return `<div class="trend-group${x.isCurrent ? " current-period" : ""}" title="${x.label}: ${money(x.spent)} spent · ${money(x.budget)} budget${x.isCurrent ? " to date" : ""}">
+      const classes = ["trend-group", x.isCurrent ? "current-period" : "", x.isSelected ? "selected-period" : ""].filter(Boolean).join(" ");
+      return `<button class="${classes}" data-month-start="${x.monthStart}" type="button" title="${x.longLabel}: ${money(x.spent)} spent · ${money(x.budget)} budget${x.isCurrent ? " to date" : ""}" aria-label="Select ${x.longLabel}">
         <div class="trend-values"><span>${x.spent ? money(x.spent) : "$0"}</span><span>${money(x.budget)}</span></div>
         <div class="trend-bars"><div class="trend-bar spent" style="height:${spentHeight}%"></div><div class="trend-bar budget" style="height:${budgetHeight}%"></div></div>
         <span class="trend-label">${x.label}${x.isCurrent ? "*" : ""}</span>
-      </div>`;
+      </button>`;
     }).join("");
+    if (rows.length) {
+      $("monthlyChartSubtitle").textContent = `6 months ending ${rows[rows.length - 1].longLabel} · tap a month`;
+    }
   }
 
   function renderDashboard() {
     const today = new Date();
-    const start = weekStartFor(today);
+    const currentWeekStart = weekStartFor(today);
+    if (!selectedWeekStart || selectedWeekStart > currentWeekStart) selectedWeekStart = currentWeekStart;
+    if (!selectedMonthDate || monthKey(selectedMonthDate) > monthKey(today)) selectedMonthDate = firstOfMonth(today);
+
+    const start = selectedWeekStart;
     const end = addDays(start, 6);
+    const isCurrentWeek = start === currentWeekStart;
+    const monthInfo = monthSummary(selectedMonthDate);
+    const isCurrentMonth = monthInfo.isCurrent;
     const categories = budgetCategories();
     const totalBudget = weeklyBudgetTotal();
     const totalSpent = sumExpenses(start, end);
     const weeklyBalance = totalBudget - totalSpent;
-    const monthBounds = currentMonthBounds(today);
-    const monthSpent = sumExpenses(monthBounds.start, isoToday());
-    const monthBudgetToDate = monthlyBudgetForDate(today, true);
-    const monthBalance = monthBudgetToDate - monthSpent;
+    const monthSpent = monthInfo.spent;
+    const monthBudget = monthInfo.budget;
+    const monthBalance = monthInfo.balance;
+
     const debtThisMonth = currentMonthPaid();
     const debtGoal = Number(settings.monthly_debt_goal || 0);
     const goalPctRaw = debtGoal > 0 ? (debtThisMonth / debtGoal) * 100 : 0;
 
     $("weekLabel").textContent = `${localDate(start)} – ${localDate(end)}`;
     $("weeklyBudgetKpi").textContent = money(totalBudget);
+    $("weeklySpentLabel").textContent = isCurrentWeek ? "Spent this week" : "Spent selected week";
     $("weeklySpentKpi").textContent = money(totalSpent);
     $("weeklyRemainingKpi").textContent = money(Math.abs(weeklyBalance));
-    $("weeklySavedLabel").textContent = weeklyBalance >= 0 ? "Saved / available" : "Over budget";
+    $("weeklySavedLabel").textContent = weeklyBalance >= 0 ? (isCurrentWeek ? "Saved / available" : "Saved that week") : "Over budget";
     $("weeklyRemainingKpi").classList.toggle("negative-text", weeklyBalance < 0);
     $("weeklyRemainingKpi").classList.toggle("positive-text", weeklyBalance >= 0);
+    $("monthlySpentLabel").textContent = isCurrentMonth ? "Spent this month" : "Spent selected month";
     $("monthlySpentKpi").textContent = money(monthSpent);
 
-    $("monthNameLabel").textContent = today.toLocaleDateString("en-US", {month:"long", year:"numeric"});
+    $("prevWeekButton").disabled = false;
+    $("nextWeekButton").disabled = isCurrentWeek;
+    $("thisWeekButton").disabled = isCurrentWeek;
+    $("prevMonthButton").disabled = false;
+    $("nextMonthButton").disabled = isCurrentMonth;
+    $("thisMonthButton").disabled = isCurrentMonth;
+
+    $("monthNameLabel").textContent = selectedMonthDate.toLocaleDateString("en-US", {month:"long", year:"numeric"});
+    $("weekSnapshotTitle").textContent = isCurrentWeek ? "This week" : "Selected week";
     $("weekSnapshotSaved").textContent = weeklyBalance >= 0 ? `${money(weeklyBalance)} saved / available` : `${money(Math.abs(weeklyBalance))} over budget`;
     $("weekSnapshotSaved").classList.toggle("negative-text", weeklyBalance < 0);
+    $("weekSnapshotSaved").classList.toggle("positive-text", weeklyBalance >= 0);
     $("weekSnapshotDetail").textContent = `${money(totalSpent)} spent of ${money(totalBudget)}`;
+
+    $("monthSnapshotTitle").textContent = isCurrentMonth ? "This month" : "Selected month";
     $("monthSnapshotSaved").textContent = monthBalance >= 0 ? `${money(monthBalance)} saved / available` : `${money(Math.abs(monthBalance))} over budget`;
     $("monthSnapshotSaved").classList.toggle("negative-text", monthBalance < 0);
-    $("monthSnapshotDetail").textContent = `${money(monthSpent)} spent of ${money(monthBudgetToDate)} budget to date`;
+    $("monthSnapshotSaved").classList.toggle("positive-text", monthBalance >= 0);
+    $("monthSnapshotDetail").textContent = `${money(monthSpent)} spent of ${money(monthBudget)} ${isCurrentMonth ? "budget to date" : "monthly budget"}`;
 
     const categoryRows = Object.entries(categories).map(([name, budget]) => ({name, budget, spent: sumExpenses(start, end, name)}));
     const untouched = categoryRows.filter(x => x.spent === 0 && x.budget > 0).map(x => x.name);
     const largest = categoryRows.reduce((a, b) => b.spent > a.spent ? b : a, {name:"", spent:0});
     let insight = weeklyBalance >= 0
-      ? `You are ${money(weeklyBalance)} under your weekly budget right now.`
-      : `You are ${money(Math.abs(weeklyBalance))} over your weekly budget right now.`;
-    if (untouched.length) insight += ` No spending yet in ${untouched.join(" and ")}.`;
-    else if (largest.spent > 0) insight += ` Your largest category this week is ${largest.name} at ${money(largest.spent)}.`;
-    if (monthBalance >= 0) insight += ` Month-to-date, ${money(monthBalance)} of your budget is still unspent.`;
-    else insight += ` Month-to-date, spending is ${money(Math.abs(monthBalance))} above your budget pace.`;
+      ? `${isCurrentWeek ? "You are" : "You were"} ${money(weeklyBalance)} under budget ${isCurrentWeek ? "this week so far" : "for the selected week"}.`
+      : `${isCurrentWeek ? "You are" : "You were"} ${money(Math.abs(weeklyBalance))} over budget ${isCurrentWeek ? "this week" : "for the selected week"}.`;
+    if (untouched.length) insight += ` No spending ${isCurrentWeek ? "yet" : "was recorded"} in ${untouched.join(" and ")}.`;
+    else if (largest.spent > 0) insight += ` The largest category ${isCurrentWeek ? "is" : "was"} ${largest.name} at ${money(largest.spent)}.`;
+    if (monthBalance >= 0) insight += ` ${isCurrentMonth ? "Month-to-date" : selectedMonthDate.toLocaleDateString("en-US", {month:"long"})}, ${money(monthBalance)} of the budget ${isCurrentMonth ? "is still unspent" : "was unspent"}.`;
+    else insight += ` ${isCurrentMonth ? "Month-to-date" : selectedMonthDate.toLocaleDateString("en-US", {month:"long"})}, spending ${isCurrentMonth ? "is" : "was"} ${money(Math.abs(monthBalance))} above budget.`;
     $("dashboardInsight").textContent = insight;
 
     $("dashboardDebtGoalAmount").textContent = `${money(debtThisMonth)} of ${money(debtGoal)}`;
@@ -335,14 +389,34 @@
         ? `Goal reached — you are ${money(debtThisMonth - debtGoal)} ahead this month.`
         : `${money(debtGoal - debtThisMonth)} remaining to reach this month’s goal.`;
 
+    $("weeklyCategoryTitle").textContent = isCurrentWeek ? "Weekly category progress" : `Category progress · ${localDate(start, {month:"short", day:"numeric"})} week`;
     $("categoryProgress").innerHTML = categoryRows.map(({name, budget, spent}) => {
       const pct = budget > 0 ? Math.min((spent / budget) * 100, 100) : (spent > 0 ? 100 : 0);
       const available = budget - spent;
       const detail = available >= 0 ? `${money(available)} left` : `${money(Math.abs(available))} over`;
-      return `<div class="progress"><div class="progress-meta"><strong>${name}</strong><span>${money(spent)} / ${money(budget)} · ${detail}</span></div><div class="track"><div class="fill ${spent > budget ? 'over' : ''}" style="width:${pct}%"></div></div></div>`;
+      return `<div class="progress"><div class="progress-meta"><strong>${name}</strong><span>${money(spent)} / ${money(budget)} · ${detail}</span></div><div class="track"><div class="fill ${spent > budget ? "over" : ""}" style="width:${pct}%"></div></div></div>`;
     }).join("");
 
-    $("recentExpenses").innerHTML = expenseItems(expenses.slice(0, 5), false);
+    const monthDaysBudgeted = isCurrentMonth ? today.getDate() : new Date(selectedMonthDate.getFullYear(), selectedMonthDate.getMonth() + 1, 0).getDate();
+    const monthlyCategoryRows = Object.entries(categories).map(([name, weeklyBudget]) => {
+      const budget = (weeklyBudget / 7) * monthDaysBudgeted;
+      const spent = sumExpenses(monthInfo.start, monthInfo.effectiveEnd, name);
+      return {name, budget, spent};
+    });
+    $("monthlyBreakdownTitle").textContent = `${selectedMonthDate.toLocaleDateString("en-US", {month:"long", year:"numeric"})} category breakdown`;
+    $("monthlyBreakdownStatus").textContent = monthBalance >= 0 ? `${money(monthBalance)} unspent` : `${money(Math.abs(monthBalance))} over`;
+    $("monthlyBreakdownStatus").classList.toggle("negative-text", monthBalance < 0);
+    $("monthlyBreakdownStatus").classList.toggle("positive-text", monthBalance >= 0);
+    $("monthlyCategoryProgress").innerHTML = monthlyCategoryRows.map(({name, budget, spent}) => {
+      const pct = budget > 0 ? Math.min((spent / budget) * 100, 100) : (spent > 0 ? 100 : 0);
+      const available = budget - spent;
+      const detail = available >= 0 ? `${money(available)} left` : `${money(Math.abs(available))} over`;
+      return `<div class="progress"><div class="progress-meta"><strong>${name}</strong><span>${money(spent)} / ${money(budget)} · ${detail}</span></div><div class="track"><div class="fill ${spent > budget ? "over" : ""}" style="width:${pct}%"></div></div></div>`;
+    }).join("");
+
+    const selectedWeekExpenses = expenses.filter(x => dateInRange(x.expense_date, start, end));
+    $("selectedWeekExpensesTitle").textContent = `${isCurrentWeek ? "Expenses this week" : "Expenses in selected week"} · ${selectedWeekExpenses.length}`;
+    $("recentExpenses").innerHTML = expenseItems(selectedWeekExpenses.slice(0, 10), false);
     renderWeeklyTrend();
     renderMonthlyTrend();
   }
@@ -418,6 +492,31 @@
     }).join("");
   }
 
+  function goToWeek(offset) {
+    const current = weekStartFor(new Date());
+    const candidate = addDays(selectedWeekStart || current, offset * 7);
+    selectedWeekStart = candidate > current ? current : candidate;
+    renderDashboard();
+  }
+
+  function goToMonth(offset) {
+    const current = firstOfMonth(new Date());
+    const base = selectedMonthDate || current;
+    const candidate = addMonths(base, offset);
+    selectedMonthDate = monthKey(candidate) > monthKey(current) ? current : candidate;
+    renderDashboard();
+  }
+
+  function jumpToCurrentWeek() {
+    selectedWeekStart = weekStartFor(new Date());
+    renderDashboard();
+  }
+
+  function jumpToCurrentMonth() {
+    selectedMonthDate = firstOfMonth(new Date());
+    renderDashboard();
+  }
+
   function switchView(view) {
     ["dashboard", "expenses", "debt", "contributions", "settings"].forEach(name => $(`${name}View`).classList.toggle("hidden", name !== view));
     document.querySelectorAll(".nav").forEach(btn => btn.classList.toggle("active", btn.dataset.view === view));
@@ -469,6 +568,12 @@
 
   $("signOutButton").onclick = async () => { await db.auth.signOut(); showAuth(); };
   $("refreshButton").onclick = loadAll;
+  $("prevWeekButton").onclick = () => goToWeek(-1);
+  $("nextWeekButton").onclick = () => goToWeek(1);
+  $("thisWeekButton").onclick = jumpToCurrentWeek;
+  $("prevMonthButton").onclick = () => goToMonth(-1);
+  $("nextMonthButton").onclick = () => goToMonth(1);
+  $("thisMonthButton").onclick = jumpToCurrentMonth;
   $("contributionYear").onchange = renderContributions;
   document.querySelectorAll(".nav").forEach(btn => btn.onclick = () => switchView(btn.dataset.view));
   document.querySelectorAll(".jump").forEach(btn => btn.onclick = () => switchView(btn.dataset.target));
@@ -537,11 +642,24 @@
     };
     const { error } = await db.from("budget_settings").upsert(row, {onConflict:"user_id"});
     if (error) return toast(error.message);
+    selectedWeekStart = null;
     toast("Settings saved.");
     await loadAll();
   });
 
   document.addEventListener("click", async e => {
+    const weekButton = e.target.closest("[data-week-start]");
+    const monthButton = e.target.closest("[data-month-start]");
+    if (weekButton) {
+      selectedWeekStart = weekButton.dataset.weekStart;
+      renderDashboard();
+      return;
+    }
+    if (monthButton) {
+      selectedMonthDate = firstOfMonth(parseLocalDate(monthButton.dataset.monthStart));
+      renderDashboard();
+      return;
+    }
     const expenseId = e.target.dataset.deleteExpense;
     const debtId = e.target.dataset.deleteDebt;
     if (expenseId && confirm("Delete this expense?")) {
@@ -578,6 +696,6 @@
   db.auth.getSession().then(({data}) => data.session?.user ? showApp(data.session.user) : showAuth());
 
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=5").catch(console.error));
+    window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=6").catch(console.error));
   }
 })();

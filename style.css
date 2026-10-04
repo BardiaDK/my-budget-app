@@ -55,3 +55,24 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(86
 .quick-form{display:grid;grid-template-columns:1.05fr .8fr 1.5fr 1fr auto;gap:12px;align-items:end;margin-top:18px}.quick-submit{height:45px;min-width:76px}.field-help{color:var(--muted);font-weight:500;line-height:1.35}
 @media(max-width:900px){.dashboard-grid{grid-template-columns:1fr}.trend-chart{height:245px}.quick-form{grid-template-columns:1fr 1fr}.quick-form label:nth-child(3){grid-column:span 2}.quick-submit{width:100%}}
 @media(max-width:600px){.snapshot-grid{grid-template-columns:1fr}.quick-form{grid-template-columns:1fr 1fr}.quick-form label:nth-child(3){grid-column:span 2}.quick-form label:nth-child(4){grid-column:1}.quick-submit{grid-column:2}.chart-card .row-between{align-items:flex-start;flex-direction:column}.trend-chart{height:225px}.weekly-trend{grid-template-columns:repeat(8,62px)}.monthly-trend{grid-template-columns:repeat(6,68px)}}
+
+/* Version 6: week and month history navigation */
+.period-nav-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.period-nav{display:flex;align-items:center;gap:6px;padding:5px;background:#0a1423;border:1px solid var(--border);border-radius:13px}
+.period-nav.compact{padding:4px}
+.period-arrow,.period-today{min-height:38px;border:0;border-radius:9px;background:transparent;color:var(--text);font-weight:900}
+.period-arrow{min-width:40px;font-size:23px;line-height:1;padding:5px 11px}
+.period-today{padding:7px 11px;color:var(--accent2);font-size:12px}
+.period-arrow:hover:not(:disabled),.period-today:hover:not(:disabled){background:var(--surface2)}
+.period-arrow:focus-visible,.period-today:focus-visible,.trend-group:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
+.period-arrow:disabled,.period-today:disabled{opacity:.35;cursor:not-allowed}
+.month-nav-area{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+.period-name{font-weight:800;white-space:nowrap}
+.trend-group{border:1px solid transparent;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.trend-group:hover{background:rgba(125,211,252,.045)}
+.trend-group.current-period{background:rgba(125,211,252,.05)}
+.trend-group.selected-period{background:rgba(86,215,189,.08);border-color:rgba(86,215,189,.32)}
+.trend-group.selected-period .trend-label{color:var(--text)}
+#monthlyBreakdownStatus{font-size:13px;font-weight:900}
+@media(max-width:760px){.dashboard-title{align-items:flex-start;flex-direction:column}.period-nav-wrap{width:100%;justify-content:space-between}.snapshot-heading{align-items:flex-start;flex-direction:column}.month-nav-area{width:100%;justify-content:space-between}.period-nav{max-width:100%}}
+@media(max-width:430px){.period-nav-wrap{gap:8px}.period-nav-wrap>.secondary{padding:10px 12px}.period-today{padding:7px 8px}.month-nav-area{align-items:flex-start;flex-direction:column}.month-nav-area .period-nav{width:100%;justify-content:space-between}.month-nav-area .period-today{flex:1}.progress-meta{align-items:flex-start;flex-direction:column;gap:4px}}
